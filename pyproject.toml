@@ -1,0 +1,57 @@
+[project]
+name = "shakepi-miniseed-viewer"
+version = "0.1.0"
+description = "Shared MiniSEED review workbench for Raspberry Shake data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "ShakePi" }]
+dependencies = [
+  "alembic>=1.14",
+  "dash[fastapi]>=4.2",
+  "fastapi>=0.115",
+  "numcodecs>=0.13,<0.16",
+  "numpy>=1.26",
+  "obspy>=1.4.2",
+  "plotly>=5.24",
+  "pydantic-settings>=2.6",
+  "python-multipart>=0.0.12",
+  "scipy>=1.12",
+  "seisbench>=0.12",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.32",
+  "zarr>=2.18,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27",
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+]
+
+[project.scripts]
+shakepi-viewer = "shakepi.main:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shakepi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[dependency-groups]
+dev = [
+    "playwright>=1.61.0",
+]

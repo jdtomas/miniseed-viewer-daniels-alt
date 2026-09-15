@@ -293,24 +293,30 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
                             html.H2("Trigger search"),
                             html.Fieldset(
                                 [
-                                    dcc.Dropdown(
-                                        id="detector-select",
-                                        options=[
-                                            {"label": "STA/LTA (single channel)", "value": "stalta"},
-                                            {"label": "PhaseNet (MEMS Z/N/E)", "value": "phasenet"},
+                                    html.Div(
+                                        [
+                                            html.Label("Detector"),
+                                            dcc.Dropdown(
+                                                id="detector-select",
+                                                options=[
+                                                    {"label": "STA/LTA (single channel)", "value": "stalta"},
+                                                    {"label": "PhaseNet (MEMS Z/N/E)", "value": "phasenet"},
+                                                ],
+                                                value="stalta",
+                                                clearable=False,
+                                            ),
                                         ],
-                                        value="stalta",
-                                        clearable=False,
+                                        className="control-field",
                                     ),
-                                    dcc.Dropdown(id="trigger-channel-select", placeholder="STA/LTA channel"),
-                                    dcc.Input(id="sta-window", type="number", value=1.0, min=0.01, step=0.1),
-                                    dcc.Input(id="lta-window", type="number", value=20.0, min=0.1, step=0.5),
-                                    dcc.Input(id="trigger-on", type="number", value=3.5, min=0.1, step=0.1),
-                                    dcc.Input(id="trigger-off", type="number", value=1.75, min=0.1, step=0.1),
-                                    dcc.Input(id="p-threshold", type="number", value=0.3, min=0.01, max=1, step=0.05),
-                                    dcc.Input(id="s-threshold", type="number", value=0.3, min=0.01, max=1, step=0.05),
-                                    html.Button("Search", id="search-button", className="search-button"),
-                                ],
+                                    html.Div([html.Label("STA/LTA channel"), dcc.Dropdown(id="trigger-channel-select", placeholder="STA/LTA channel")], className="control-field"),
+                                    html.Div([html.Label("STA window (s)"), dcc.Input(id="sta-window", type="number", value=1.0, min=0.01, step=0.1)], className="control-field"),
+                                    html.Div([html.Label("LTA window (s)"), dcc.Input(id="lta-window", type="number", value=20.0, min=0.1, step=0.5)], className="control-field"),
+                                    html.Div([html.Label("Trigger on"), dcc.Input(id="trigger-on", type="number", value=3.5, min=0.1, step=0.1)], className="control-field"),
+                                    html.Div([html.Label("Trigger off"), dcc.Input(id="trigger-off", type="number", value=1.75, min=0.1, step=0.1)], className="control-field"),
+                                    html.Div([html.Label("P threshold"), dcc.Input(id="p-threshold", type="number", value=0.3, min=0.01, max=1, step=0.05)], className="control-field"),
+                                    html.Div([html.Label("S threshold"), dcc.Input(id="s-threshold", type="number", value=0.3, min=0.01, max=1, step=0.05)], className="control-field"),
+                                    html.Button("Search", id="search-button", className="search-button settings-action"),
+                                        ],
                                 id="search-controls",
                                 className="controls-grid",
                             ),

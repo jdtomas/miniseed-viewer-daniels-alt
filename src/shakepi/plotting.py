@@ -68,7 +68,7 @@ def waveform_spectrogram_figure(
                     x=_offsets_to_datetimes(start, spec_times),
                     y=frequencies,
                     z=decibels,
-                    colorscale="Turbo",
+                    colorscale="Plasma",
                     colorbar={"title": "dB", "len": 0.2},
                     hovertemplate="%{x|%Y-%m-%d %H:%M:%S UTC}<br>%{y:.2f} Hz<br>%{z:.1f} dB<extra></extra>",
                 ),

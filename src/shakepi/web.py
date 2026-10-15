@@ -7,7 +7,7 @@ import binascii
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from dash import Dash, Input, Output, State, dcc, html, no_update
+from dash import ClientsideFunction, Dash, Input, Output, State, dcc, html, no_update
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from obspy import Stream
 from pydantic import ValidationError
@@ -184,7 +184,6 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
                 n_intervals=0,
                 disabled=True,
             ),
-            dcc.Store(id="viewport"),
             html.Main(
                 [
                     html.Section(
@@ -258,15 +257,20 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
                                         ],
                                         className="control-field",
                                     ),
-                                    html.Button("Use visible range", id="use-visible", className="secondary-button"),
+                                    html.Button("Use visible range", id="use-visible", className="secondary-button", disabled=True),
+                                    html.Button("Reset view", id="reset-view", className="secondary-button", disabled=True),
+                                    dcc.Store(id="reset-view-result"),
+                                    html.Button("Load waveform", id="load-overview", className="search-button"),
                                 ],
                                 id="overview-range-controls",
                                 className="range-grid",
                             ),
+                            html.Div(id="visible-range-status", className="subtle", role="status", **{"aria-live": "polite"}),
                             dcc.Loading(
                                 id="overview-loading",
                                 children=dcc.Graph(
                                     id="overview-graph",
+                                    figure=waveform_spectrogram_figure(Stream()),
                                     config={"displaylogo": False},
                                     className="waveform-graph",
                                 ),
@@ -376,6 +380,7 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
                                         id="detail-loading",
                                         children=dcc.Graph(
                                             id="detail-graph",
+                                            figure=waveform_spectrogram_figure(Stream()),
                                             config={"displaylogo": False},
                                             className="waveform-graph",
                                         ),
@@ -446,7 +451,7 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         values = {item["id"] for item in choices}
         if current in values:
             return options, no_update
-        return options, options[0]["value"] if options else None
+        return options, None
 
     @app.callback(
         Output("channel-select", "options"),
@@ -464,12 +469,16 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         channels = list(period["channels"])
         selected = [channel for channel in (current_channels or []) if channel in channels][:4] or channels[:4]
         start, end = source.bounds(period_id)
+        default_end = min(end, start + timedelta(minutes=5))
         return (
             [{"label": channel, "value": channel} for channel in channels],
             selected,
-            f"Available channels: {', '.join(channels)}. Raw amplitudes are uncorrected counts.",
+            (
+                f"Available channels: {', '.join(channels)}. Raw amplitudes are uncorrected counts. "
+                "Choose a time range, then click Load waveform."
+            ),
             start.isoformat(),
-            end.isoformat(),
+            default_end.isoformat(),
         )
 
     @app.callback(
@@ -504,48 +513,68 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
             detector = "stalta"
         return channel_options, trigger_channel, detector_options, detector
 
-    @app.callback(
-        Output("viewport", "data"),
-        Input("overview-graph", "relayoutData"),
-        State("viewport", "data"),
+    app.clientside_callback(
+        ClientsideFunction(namespace="shakepi", function_name="viewButtonsDisabled"),
+        Output("use-visible", "disabled"),
+        Output("reset-view", "disabled"),
+        Input("overview-graph", "figure"),
+        Input("period-select", "value"),
+        Input("channel-select", "value"),
+    )
+
+    app.clientside_callback(
+        r"""async function(clicks, figure) {
+            if (!clicks || !figure || !figure.data || !figure.data.length) {
+                return window.dash_clientside.no_update;
+            }
+            const graph = document.querySelector('#overview-graph .js-plotly-plot');
+            if (!graph || !window.Plotly) return window.dash_clientside.no_update;
+            const update = {};
+            for (const [name, axis] of Object.entries(figure.layout)) {
+                if (!/^[xy]axis\d*$/.test(name)) continue;
+                const range = name.startsWith('x')
+                    ? figure.layout.meta?.default_time_range : null;
+                if (range) {
+                    update[name + '.autorange'] = false;
+                    update[name + '.range[0]'] = range[0];
+                    update[name + '.range[1]'] = range[1];
+                } else {
+                    update[name + '.autorange'] = true;
+                }
+            }
+            await window.Plotly.relayout(graph, update);
+            return clicks;
+        }""",
+        Output("reset-view-result", "data"),
+        Input("reset-view", "n_clicks"),
+        State("overview-graph", "figure"),
         prevent_initial_call=True,
     )
-    def capture_viewport(relayout: dict[str, object] | None, existing: dict[str, object] | None):
-        if not relayout:
-            return existing
-        left = relayout.get("xaxis.range[0]")
-        right = relayout.get("xaxis.range[1]")
-        if left is not None and right is not None:
-            return {"start": left, "end": right}
-        return existing
 
-    @app.callback(
+    app.clientside_callback(
+        ClientsideFunction(namespace="shakepi", function_name="useVisibleRange"),
         Output("range-start", "value", allow_duplicate=True),
         Output("range-end", "value", allow_duplicate=True),
+        Output("visible-range-status", "children"),
         Input("use-visible", "n_clicks"),
-        State("viewport", "data"),
+        State("overview-graph", "figure"),
+        State("period-select", "value"),
+        State("channel-select", "value"),
         prevent_initial_call=True,
     )
-    def use_visible(_: int, viewport: dict[str, object] | None):
-        if not viewport:
-            return "", ""
-        def as_iso(value: object) -> str:
-            if isinstance(value, (int, float)):
-                return datetime.fromtimestamp(value, tz=UTC).isoformat()
-            return str(value)
-
-        return as_iso(viewport.get("start", "")), as_iso(viewport.get("end", ""))
 
     @app.callback(
         Output("overview-graph", "figure"),
         Output("overview-status", "children"),
-        Input("period-select", "value"),
-        Input("channel-select", "value"),
-        Input("range-start", "value"),
-        Input("range-end", "value"),
-        Input("preprocess-options", "value"),
-        Input("bandpass-low", "value"),
-        Input("bandpass-high", "value"),
+        Input("load-overview", "n_clicks"),
+        State("period-select", "value"),
+        State("channel-select", "value"),
+        State("range-start", "value"),
+        State("range-end", "value"),
+        State("preprocess-options", "value"),
+        State("bandpass-low", "value"),
+        State("bandpass-high", "value"),
+        prevent_initial_call=True,
         running=[
             (
                 Output("overview-range-controls", "className"),
@@ -556,6 +585,7 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         ],
     )
     def render_overview(
+        _load_clicks: int | None,
         period_id: int | None,
         channels: list[str] | None,
         start_value: str | None,
@@ -575,8 +605,16 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
             stream = analysis.prepared_stream(period_id, channels, (start, end), recipe)
             point_count = sum(len(trace.data) for trace in stream)
             plotted_channels = ", ".join(trace.id for trace in stream) or "none"
+            figure = waveform_spectrogram_figure(stream, (start, end))
+            if stream:
+                figure.update_xaxes(range=[start.isoformat(), end.isoformat()], autorange=False)
+                figure.update_layout(meta={
+                    "default_time_range": [start.isoformat(), end.isoformat()],
+                    "period_id": period_id,
+                    "channels": sorted(channels),
+                })
             return (
-                waveform_spectrogram_figure(stream, (start, end)),
+                figure,
                 (
                     f"Plotted {point_count:,} samples from {plotted_channels} "
                     f"between {start.isoformat()} and {end.isoformat()}."

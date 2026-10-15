@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import socket
 import threading
 import time
@@ -84,9 +85,57 @@ def _launch_chromium():
     try:
         browser = started.chromium.launch()
     except Error as error:
-        manager.__exit__(None, None, None)
-        pytest.skip(f"Playwright Chromium is not installed: {error}")
+        try:
+            browser = started.chromium.launch(channel="msedge")
+        except Error:
+            manager.__exit__(None, None, None)
+            pytest.skip(f"No Chromium or Edge browser available: {error}")
     return manager, browser
+
+
+def test_four_channel_fractional_time_load_and_reset(live_app: str) -> None:
+    """Catch browser scaling errors, not just successful server responses."""
+    from obspy import Stream, Trace, UTCDateTime
+
+    manager, browser = _launch_chromium()
+    errors = []
+    try:
+        page = browser.new_page()
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        for channel in ["EHZ", "ENZ", "ENN", "ENE"]:
+            output = io.BytesIO()
+            Stream([Trace(
+                np.round(1000 * np.sin(np.arange(30001) / 10)).astype(np.int32),
+                header=dict(network="AM", station="RF4E8", location="00", channel=channel,
+                            sampling_rate=100, starttime=UTCDateTime("2026-02-02T00:00:00.002Z")),
+            )]).write(output, format="MSEED")
+            response = page.request.post(live_app + "/api/uploads", multipart={
+                "files": {"name": f"AM.RF4E8.00.{channel}.D.2026.033",
+                          "mimeType": "application/octet-stream", "buffer": output.getvalue()}
+            })
+            assert response.ok
+        page.goto(live_app)
+        page.get_by_text("No station period selected.", exact=True).wait_for()
+        page.locator("#period-select").click()
+        page.get_by_text("AM.RF4E8.00", exact=False).first.click()
+        page.wait_for_function("() => document.querySelector('#range-end').value.includes('00:05')")
+        page.locator("#load-overview").click()
+        page.wait_for_function("""() => document.querySelectorAll(
+            '#overview-graph .scatterlayer .js-line').length === 4""")
+        page.evaluate("""async () => {
+            await Plotly.relayout(document.querySelector('#overview-graph .js-plotly-plot'),
+                {'xaxis2.range': ['2026-02-02 00:01:00', '2026-02-02 00:02:00'],
+                 'xaxis2.autorange': false});
+        }""")
+        page.locator("#reset-view").click()
+        page.wait_for_function("""() => document.querySelector(
+            '#overview-graph .js-plotly-plot')._fullLayout.xaxis.range[0].includes('00:00:00.002')""")
+        page.locator("#use-visible").click()
+        page.wait_for_function("() => document.querySelector('#range-start').value === '2026-02-02T00:00:00.002Z'")
+        assert not errors, errors
+    finally:
+        browser.close()
+        manager.__exit__(None, None, None)
 
 
 def test_uploaded_waveform_renders_points_and_survives_refresh(
@@ -112,6 +161,9 @@ def test_uploaded_waveform_renders_points_and_survives_refresh(
         page.get_by_text(
             "MiniSEED file stored in the immutable SDS archive."
         ).wait_for(timeout=10_000)
+        page.locator("#period-select").click()
+        page.get_by_text("AM.RF4E8.00", exact=False).first.click()
+        page.get_by_role("button", name="Load waveform", exact=True).click()
         page.locator("#overview-loading .graph-skeleton").wait_for(
             state="visible",
             timeout=10_000,
@@ -168,7 +220,7 @@ def test_uploaded_waveform_renders_points_and_survives_refresh(
         )
 
         page.reload(wait_until="domcontentloaded")
-        page.get_by_text("Plotted 6,000 samples").wait_for(timeout=10_000)
+        page.get_by_text("No station period selected.", exact=True).wait_for(timeout=10_000)
         page.wait_for_function("() => document.title === 'ShakePi MiniSEED Viewer'")
         assert page.title() == "ShakePi MiniSEED Viewer"
     finally:

@@ -86,7 +86,7 @@ def test_empty_waveform_figure_uses_the_dark_theme() -> None:
     figure = waveform_spectrogram_figure(Stream())
 
     assert figure.layout.paper_bgcolor == "#0b1020"
-    assert figure.layout.plot_bgcolor == "#101827"
+    assert figure.layout.plot_bgcolor == "#0b1020"
     assert figure.layout.font.color == "#e5edf9"
 
 

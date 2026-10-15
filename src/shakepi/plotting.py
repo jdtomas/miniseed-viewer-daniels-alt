@@ -27,13 +27,24 @@ def waveform_spectrogram_figure(
     if not traces:
         return go.Figure(
             layout={
-                "title": "No waveform data in this time range",
                 "template": "plotly_dark",
                 "paper_bgcolor": "#0b1020",
-                "plot_bgcolor": "#101827",
+                "plot_bgcolor": "#0b1020",
                 "font": {"color": "#e5edf9"},
-                "xaxis": {"visible": False},
-                "yaxis": {"visible": False},
+                # Time remains a date axis even while the graph is empty.
+                "xaxis": {"type": "date", "visible": False, "fixedrange": True},
+                "yaxis": {"visible": False, "fixedrange": True},
+                # Let Plotly size the empty graph. A short explicit height can
+                # break axis scaling when react adds multiple subplot rows.
+                "margin": {"l": 20, "r": 20, "t": 20, "b": 20},
+                "annotations": [{
+                    "text": "No Data Available",
+                    "xref": "paper", "yref": "paper",
+                    "x": 0.5, "y": 0.5,
+                    "showarrow": False,
+                    "font": {"size": 20, "color": "#e5edf9"},
+                }],
+                "modebar": {"remove": ["zoom", "pan", "select", "lasso", "zoomIn", "zoomOut", "autoScale", "resetScale", "toImage"]},
             }
         )
     figure = make_subplots(

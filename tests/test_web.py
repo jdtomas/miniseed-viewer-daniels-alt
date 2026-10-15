@@ -92,6 +92,7 @@ def test_layout_has_scoped_accessible_loading_feedback(tmp_path: Path) -> None:
 
     upload_loading = _component_with_id(app.layout, "upload-loading")
     overview_loading = _component_with_id(app.layout, "overview-loading")
+    load_overview = _component_with_id(app.layout, "load-overview")
     detail_loading = _component_with_id(app.layout, "detail-loading")
     preprocess_refresh = _component_with_id(app.layout, "preprocess-refresh")
     detector_refresh = _component_with_id(app.layout, "detector-refresh")
@@ -100,6 +101,7 @@ def test_layout_has_scoped_accessible_loading_feedback(tmp_path: Path) -> None:
 
     assert upload_loading.target_components == {"upload-status": "children"}
     assert overview_loading.target_components == {"overview-graph": "figure"}
+    assert load_overview is not None
     assert overview_loading.custom_spinner.role == "status"
     assert detail_loading.target_components == {"detail-graph": "figure"}
     assert detail_loading.custom_spinner.role == "status"
@@ -262,6 +264,9 @@ def test_overview_graph_dash_endpoint_contains_waveform_points(tmp_path: Path) -
             [
                 {"id": "overview-graph", "property": "figure"},
                 {"id": "overview-status", "property": "children"},
+            ],
+            [
+                {"id": "load-overview", "property": "n_clicks", "value": 1},
             ],
             [
                 {"id": "period-select", "property": "value", "value": period_id},

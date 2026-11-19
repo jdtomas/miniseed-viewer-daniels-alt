@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 from obspy import Stream, UTCDateTime, read
-from scipy.signal import spectrogram
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -99,6 +98,7 @@ def trace_plot_data(trace: object, max_points: int = 4_000) -> tuple[np.ndarray,
 
 def spectrogram_data(trace: object, max_time_bins: int = 1_500, max_frequency_bins: int = 256) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Produce an RX-style log-power spectrogram bounded for browser delivery."""
+    from scipy.signal import spectrogram
     sample_rate = float(trace.stats.sampling_rate)
     data = np.asarray(trace.data, dtype=np.float32)
     if len(data) < 16:

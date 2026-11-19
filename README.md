@@ -17,6 +17,19 @@ Open `http://localhost:8050`. Upload files named like `AM.RF4E8.00.EHZ.D.2026.03
 name and MiniSEED headers, stores accepted files at `data/raw/{year}/{network}/{station}/{channel}.D/`, and quarantines
 conflicting replacements rather than overwriting data.
 
+## Workbench workflow
+
+1. Upload MiniSEED files or choose an existing recording in the left column. Neither action automatically reads waveform samples.
+2. Select **Load day overview** to prepare a reduced raw-count summary in the background. Summaries are cached on disk and preserve extrema and recording gaps; they are only for navigation, never detector input.
+3. Move or resize the highlighted region, or edit the UTC start/end fields in the right column.
+4. Choose channels and select **Load detail**. The initial interval is at most five minutes. Enable **Include spectrogram on Load detail** only when needed, then reload detail.
+5. Zoom/pan the detail graph, **Reset view** to restore the last loaded range, or **Use visible range** to explicitly change the search interval.
+6. Choose preprocessing and detector settings, then **Run detection**. Select a candidate on the left to inspect it in the same detail graph. Assess it as Unreviewed, Earthquake, Noise, or Uncertain, add notes, and select **Save review**.
+
+**Build day cache** is optional background processing for the entire selected station day, not just the search interval. Changing preprocessing or channels does not silently reload detail. Refreshing the page starts with no selected recording. Detector model weights may require a first-use download by SeisBench.
+
+The responsive workbench keeps recordings/candidates on the left, day overview/detail in the center, and search/settings/review on the right. On smaller screens the columns stack.
+
 ## Design notes
 
 - Raw MiniSEED stays outside SQLite and is never modified.

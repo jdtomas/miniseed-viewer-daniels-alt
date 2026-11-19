@@ -1,4 +1,22 @@
 :root { color-scheme: dark; }
+.workbench-grid { display:grid; grid-template-columns: 220px minmax(0,1fr) 275px; gap:1rem; max-width:1800px; margin:0 auto; padding:1rem; }
+.workbench-library,.workbench-main,.workbench-inspector { min-width:0; }
+.workbench-library { background:#0e1628; border:1px solid #26344e; border-radius:.75rem; padding:1rem; }
+main.workbench-main { max-width:none; padding:0; margin:0; }
+.workbench-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; margin:.75rem 0; }
+.workbench-toolbar h2 { flex:1; margin:0; }
+.workbench-inspector .control-field,.workbench-inspector fieldset>label { margin:.65rem 0; display:grid; gap:.4rem; }
+.workbench-inspector button { margin-top:.6rem; }
+.workbench-inspector summary { cursor:pointer; margin-bottom:.7rem; }
+.workbench-inspector .subtle,.workbench-library .subtle { font-size:.8rem; margin-top:.65rem; overflow-wrap:anywhere; }
+.workbench-inspector textarea { margin-top:.7rem; }
+.workbench-library hr { border:0; border-top:1px solid #26344e; margin:1.2rem 0; }
+.workbench-library .upload-dropzone { padding:.8rem .4rem; }
+.candidate-list input[type=radio],.workbench-grid input[type=checkbox] { width:auto; min-height:0; margin-right:.4rem; }
+.day-graph { min-height:250px; }
+.workbench-grid .graph-loading-shell,.workbench-grid .waveform-graph { min-height:380px; }
+@media(max-width:1150px){.workbench-grid{grid-template-columns:180px minmax(0,1fr)}.workbench-inspector{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}}
+@media(max-width:650px){.workbench-grid{grid-template-columns:minmax(0,1fr);padding:.5rem}.workbench-inspector{grid-template-columns:minmax(0,1fr)}.topbar{padding:1rem}.workbench-grid .panel{padding:.65rem}}
 * { box-sizing: border-box; }
 body { margin: 0; background: #060b16; color: #e5edf9; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
 .topbar { align-items: center; background: #0e1628; border-bottom: 1px solid #26344e; display: flex; justify-content: space-between; padding: 1rem 2rem; }

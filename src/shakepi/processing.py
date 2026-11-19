@@ -105,7 +105,9 @@ class ZarrCache:
             self.touch(cache_key)
             return final_path
         final_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = final_path.with_name(f".{final_path.name}.{uuid4().hex}.tmp")
+        # Zarr also appends a UUID to each metadata write. Do not repeat the
+        # 64-character cache key here: Windows paths otherwise exceed MAX_PATH.
+        temp_path = final_path.with_name(f".{uuid4().hex[:12]}.tmp")
         group = zarr.open_group(str(temp_path), mode="w")
         compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.BITSHUFFLE)
         for index, trace in enumerate(stream):

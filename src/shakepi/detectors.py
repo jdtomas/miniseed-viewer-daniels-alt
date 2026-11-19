@@ -8,7 +8,6 @@ from typing import Protocol
 
 import numpy as np
 from obspy import Stream
-from obspy.signal.trigger import classic_sta_lta, trigger_onset
 
 from .schemas import CandidateResult, DetectionRunResult, PhaseNetParameters, StaLtaParameters
 
@@ -42,6 +41,7 @@ class StaLtaDetector:
         )
 
     def run(self, stream: Stream, parameters: StaLtaParameters) -> DetectionRunResult:
+        from obspy.signal.trigger import classic_sta_lta, trigger_onset
         if len(set(trace.id for trace in stream)) > 1:
             raise ValueError("STA/LTA requires one selected channel")
         candidates: list[CandidateResult] = []

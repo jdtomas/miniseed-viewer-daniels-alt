@@ -87,7 +87,7 @@ class PhaseNetParameters(BaseModel):
 
 
 class AssessmentPayload(BaseModel):
-    verdict: Literal["quake", "noise", "uncertain"]
+    verdict: Literal["unreviewed", "quake", "noise", "uncertain"]
     notes: str = Field(default="", max_length=10_000)
 
 

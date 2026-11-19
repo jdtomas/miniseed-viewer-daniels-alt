@@ -22,6 +22,7 @@ def waveform_spectrogram_figure(
     stream: Stream,
     search_range: tuple[datetime, datetime] | None = None,
     title: str = "Waveform review",
+    show_spectrogram: bool = True,
 ) -> go.Figure:
     traces = list(stream)
     if not traces:
@@ -48,15 +49,15 @@ def waveform_spectrogram_figure(
             }
         )
     figure = make_subplots(
-        rows=len(traces) * 2,
+        rows=len(traces) * (2 if show_spectrogram else 1),
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.025,
-        row_heights=[0.58, 0.42] * len(traces),
-        subplot_titles=[label for trace in traces for label in (trace.id, f"{trace.id} spectrogram")],
+        row_heights=([0.58, 0.42] if show_spectrogram else [1]) * len(traces),
+        subplot_titles=[label for trace in traces for label in ((trace.id, f"{trace.id} spectrogram") if show_spectrogram else (trace.id,))],
     )
     for index, trace in enumerate(traces):
-        row = index * 2 + 1
+        row = index * (2 if show_spectrogram else 1) + 1
         offsets, values = trace_plot_data(trace)
         start = trace.stats.starttime.datetime.replace(tzinfo=UTC)
         times = _offsets_to_datetimes(start, offsets)
@@ -72,7 +73,7 @@ def waveform_spectrogram_figure(
             row=row,
             col=1,
         )
-        spec_times, frequencies, decibels = spectrogram_data(trace)
+        spec_times, frequencies, decibels = spectrogram_data(trace) if show_spectrogram else (np.empty(0), None, None)
         if spec_times.size:
             figure.add_trace(
                 go.Heatmap(
@@ -101,15 +102,15 @@ def waveform_spectrogram_figure(
             annotation_position="top left",
         )
     figure.update_xaxes(
-        title_text="UTC time",
         type="date",
         tickformat="%H:%M:%S",
         hoverformat="%Y-%m-%d %H:%M:%S.%L UTC",
     )
+    figure.update_xaxes(title_text="UTC time", row=len(traces) * (2 if show_spectrogram else 1), col=1)
     figure.update_layout(
         title=title,
         template="plotly_dark",
-        height=max(600, 360 * len(traces)),
+        height=max(400, (360 if show_spectrogram else 170) * len(traces)),
         margin={"l": 64, "r": 24, "t": 70, "b": 48},
         showlegend=False,
         dragmode="pan",

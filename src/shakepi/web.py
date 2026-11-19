@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from dash import ClientsideFunction, Dash, Input, Output, State, dcc, html, no_update
+from dash import ClientsideFunction, Dash, Input, Output, State, ctx, dcc, html, no_update
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from obspy import Stream
 from pydantic import ValidationError
@@ -103,7 +104,16 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
     source = WaveformSource(sessions)
     analysis = AnalysisService(sessions, source, ZarrCache(settings, sessions), LocalJobRunner(settings.job_workers))
 
-    server = FastAPI(title="ShakePi MiniSEED Viewer")
+    @asynccontextmanager
+    async def lifespan(_server):
+        try:
+            yield
+        finally:
+            day.executor.shutdown(wait=True, cancel_futures=True)
+            analysis.jobs.executor.shutdown(wait=True, cancel_futures=True)
+            engine.dispose()
+
+    server = FastAPI(title="ShakePi MiniSEED Viewer", lifespan=lifespan)
 
     @server.get("/api/health")
     def health() -> dict[str, str]:
@@ -129,286 +139,70 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         update_title=None,
         assets_folder=str(Path(__file__).parent / "assets"),
     )
-    app.layout = html.Div(
-        [
-            html.Header(
-                [
-                    html.Div([html.H1("ShakePi MiniSEED Viewer"), html.P("Shared retrospective detector calibration")]),
-                    html.Div(
-                        [
-                            dcc.Upload(
-                                id="upload-files",
-                                children=html.Div(
-                                    [
-                                        html.Strong("Drop MiniSEED files here"),
-                                        html.Span(" or click to choose files"),
-                                    ]
-                                ),
-                                className="upload-dropzone",
-                                className_active="upload-dropzone-active",
-                                multiple=True,
-                            ),
-                            dcc.Loading(
-                                id="upload-loading",
-                                children=html.Div(
-                                    id="upload-status",
-                                    className="subtle",
-                                    role="status",
-                                    **{"aria-live": "polite"},
-                                ),
-                                custom_spinner=_activity_status(
-                                    "Uploading and validating MiniSEED files"
-                                ),
-                                delay_show=150,
-                                delay_hide=200,
-                                target_components={"upload-status": "children"},
-                            ),
-                        ],
-                        className="upload-area",
-                    ),
-                ],
-                className="topbar",
-            ),
-            dcc.Interval(id="refresh", interval=3_000, n_intervals=0),
-            dcc.Store(id="preprocess-operation", storage_type="session"),
-            dcc.Store(id="detector-operation", storage_type="session"),
-            dcc.Interval(
-                id="preprocess-refresh",
-                interval=1_000,
-                n_intervals=0,
-                disabled=True,
-            ),
-            dcc.Interval(
-                id="detector-refresh",
-                interval=1_000,
-                n_intervals=0,
-                disabled=True,
-            ),
-            html.Main(
-                [
-                    html.Section(
-                        [
-                            html.Div(
-                                [
-                                    html.Label("Station period"),
-                                    dcc.Dropdown(id="period-select", placeholder="Upload MiniSEED files to begin"),
-                                ],
-                                className="selector-control",
-                            ),
-                            html.Div(
-                                [
-                                    html.Label("Channels (up to four)"),
-                                    dcc.Dropdown(id="channel-select", multi=True),
-                                ],
-                                className="selector-control",
-                            ),
-                            html.Div(id="period-status", className="subtle"),
-                        ],
-                        className="panel selector-panel",
-                    ),
-                    html.Section(
-                        [
-                            html.H2("Preprocessing and search region"),
-                            html.Fieldset(
-                                [
-                                    html.Div(
-                                        dcc.Checklist(
-                                            id="preprocess-options",
-                                            options=[
-                                                {"label": "Fill gaps up to 1 second", "value": "fill"},
-                                                {"label": "DeepDenoiser (100 Hz per channel)", "value": "denoise"},
-                                            ],
-                                        ),
-                                        className="preprocess-toggles",
-                                    ),
-                                    html.Div(
-                                        [
-                                            html.Label("Bandpass low Hz"),
-                                            dcc.Input(id="bandpass-low", type="number", min=0.01, step=0.1),
-                                        ],
-                                        className="control-field",
-                                    ),
-                                    html.Div(
-                                        [
-                                            html.Label("Bandpass high Hz"),
-                                            dcc.Input(id="bandpass-high", type="number", min=0.02, step=0.1),
-                                        ],
-                                        className="control-field",
-                                    ),
-                                    html.Button("Apply preprocessing", id="apply-preprocess", className="secondary-button"),
-                                    html.Div(id="preprocess-status", className="subtle"),
-                                ],
-                                id="preprocess-controls",
-                                className="preprocess-grid",
-                            ),
-                            html.Div(
-                                [
-                                    html.Div(
-                                        [
-                                            html.Label("Search start (UTC ISO 8601)"),
-                                            dcc.Input(id="range-start", type="text", debounce=True),
-                                        ],
-                                        className="control-field",
-                                    ),
-                                    html.Div(
-                                        [
-                                            html.Label("Search end (UTC ISO 8601)"),
-                                            dcc.Input(id="range-end", type="text", debounce=True),
-                                        ],
-                                        className="control-field",
-                                    ),
-                                    html.Button("Use visible range", id="use-visible", className="secondary-button", disabled=True),
-                                    html.Button("Reset view", id="reset-view", className="secondary-button", disabled=True),
-                                    dcc.Store(id="reset-view-result"),
-                                    html.Button("Load waveform", id="load-overview", className="search-button"),
-                                ],
-                                id="overview-range-controls",
-                                className="range-grid",
-                            ),
-                            html.Div(id="visible-range-status", className="subtle", role="status", **{"aria-live": "polite"}),
-                            dcc.Loading(
-                                id="overview-loading",
-                                children=dcc.Graph(
-                                    id="overview-graph",
-                                    figure=waveform_spectrogram_figure(Stream()),
-                                    config={"displaylogo": False},
-                                    className="waveform-graph",
-                                ),
-                                custom_spinner=_graph_skeleton(
-                                    "Preparing waveform and spectrogram"
-                                ),
-                                delay_show=150,
-                                delay_hide=200,
-                                target_components={"overview-graph": "figure"},
-                                parent_className="graph-loading-shell",
-                            ),
-                            html.Div(
-                                id="overview-status",
-                                className="subtle",
-                                role="status",
-                                **{"aria-live": "polite"},
-                            ),
-                        ],
-                        id="overview-region",
-                        className="panel",
-                    ),
-                    html.Section(
-                        [
-                            html.H2("Trigger search"),
-                            html.Fieldset(
-                                [
-                                    html.Div(
-                                        [
-                                            html.Label("Detector"),
-                                            dcc.Dropdown(
-                                                id="detector-select",
-                                                options=[
-                                                    {"label": "STA/LTA (single channel)", "value": "stalta"},
-                                                    {"label": "PhaseNet (MEMS Z/N/E)", "value": "phasenet"},
-                                                ],
-                                                value="stalta",
-                                                clearable=False,
-                                            ),
-                                        ],
-                                        className="control-field",
-                                    ),
-                                    html.Div([html.Label("STA/LTA channel"), dcc.Dropdown(id="trigger-channel-select", placeholder="STA/LTA channel")], className="control-field"),
-                                    html.Div([html.Label("STA window (s)"), dcc.Input(id="sta-window", type="number", value=1.0, min=0.01, step=0.1)], className="control-field"),
-                                    html.Div([html.Label("LTA window (s)"), dcc.Input(id="lta-window", type="number", value=20.0, min=0.1, step=0.5)], className="control-field"),
-                                    html.Div([html.Label("Trigger on"), dcc.Input(id="trigger-on", type="number", value=3.5, min=0.1, step=0.1)], className="control-field"),
-                                    html.Div([html.Label("Trigger off"), dcc.Input(id="trigger-off", type="number", value=1.75, min=0.1, step=0.1)], className="control-field"),
-                                    html.Div([html.Label("P threshold"), dcc.Input(id="p-threshold", type="number", value=0.3, min=0.01, max=1, step=0.05)], className="control-field"),
-                                    html.Div([html.Label("S threshold"), dcc.Input(id="s-threshold", type="number", value=0.3, min=0.01, max=1, step=0.05)], className="control-field"),
-                                    html.Button("Search", id="search-button", className="search-button settings-action"),
-                                        ],
-                                id="search-controls",
-                                className="controls-grid",
-                            ),
-                            html.P(
-                                "PhaseNet is enabled only for complete time-aligned MEMS Z/N/E channels. STA/LTA defaults to the geophone.",
-                                className="subtle",
-                            ),
-                            html.Div(
-                                id="search-status",
-                                role="status",
-                                **{"aria-live": "polite"},
-                            ),
-                        ],
-                        className="panel",
-                    ),
-                    html.Section(
-                        [
-                            html.Aside(
-                                [
-                                    html.H2("Detected candidates"),
-                                    html.Div(
-                                        dcc.RadioItems(
-                                            id="candidate-select",
-                                            className="candidate-list",
-                                        ),
-                                        id="candidate-list-region",
-                                    ),
-                                    html.Label("Assessment"),
-                                    dcc.Dropdown(
-                                        id="assessment-verdict",
-                                        options=[
-                                            {"label": "Earthquake", "value": "quake"},
-                                            {"label": "Noise", "value": "noise"},
-                                            {"label": "Uncertain", "value": "uncertain"},
-                                        ],
-                                    ),
-                                    dcc.Textarea(id="assessment-notes", placeholder="Review notes"),
-                                    html.Button("Save assessment", id="save-assessment", className="secondary-button"),
-                                    html.Div(id="assessment-status", className="subtle"),
-                                ],
-                                className="results-sidebar",
-                            ),
-                            html.Div(
-                                [
-                                    html.H2("Candidate detail"),
-                                    html.Fieldset(
-                                        [
-                                            html.Label("Left padding s"),
-                                            dcc.Input(id="detail-left", type="number", value=30, min=0),
-                                            html.Label("Right padding s"),
-                                            dcc.Input(id="detail-right", type="number", value=90, min=0),
-                                        ],
-                                        id="detail-controls",
-                                        className="controls-grid small-controls",
-                                    ),
-                                    dcc.Loading(
-                                        id="detail-loading",
-                                        children=dcc.Graph(
-                                            id="detail-graph",
-                                            figure=waveform_spectrogram_figure(Stream()),
-                                            config={"displaylogo": False},
-                                            className="waveform-graph",
-                                        ),
-                                        custom_spinner=_graph_skeleton(
-                                            "Preparing candidate waveform"
-                                        ),
-                                        delay_show=150,
-                                        delay_hide=200,
-                                        target_components={"detail-graph": "figure"},
-                                        parent_className="graph-loading-shell",
-                                    ),
-                                    html.Div(
-                                        id="detail-status",
-                                        className="subtle",
-                                        role="status",
-                                        **{"aria-live": "polite"},
-                                    ),
-                                ],
-                                id="detail-region",
-                                className="results-detail",
-                            ),
-                        ],
-                        className="results-layout panel",
-                    ),
-                ]
-            ),
-        ]
-    )
+    from .workbench import layout
+
+    app.layout = layout()
+
+    from .day_overview import DayOverview, day_figure
+    day = DayOverview(settings, sessions)
+
+    @app.callback(Output("day-operation", "data"), Input("load-day", "n_clicks"), State("period-select", "value"), prevent_initial_call=True)
+    def load_day(_, period_id):
+        try:
+            return {"key": day.queue(period_id), "period_id": period_id}
+        except Exception as error:
+            return {"error": str(error), "period_id": period_id}
+
+    @app.callback(Output("day-graph", "figure"), Output("day-status", "children"), Output("day-refresh", "disabled"),
+                  Input("day-operation", "data"), Input("day-refresh", "n_intervals"), Input("period-select", "value"),
+                  State("range-start", "value"), State("range-end", "value"))
+    def monitor_day(operation, _, period_id, start, end):
+        if not operation or operation.get("period_id") != period_id:
+            return waveform_spectrogram_figure(Stream()), "Choose a recording, then Load day overview.", True
+        if operation.get("error"):
+            return no_update, operation["error"], True
+        state, result = day.status(operation["key"])
+        if state == "running":
+            return no_update, "Preparing reduced day overview in the background…", False
+        if state == "failed":
+            return no_update, f"Overview failed: {result}", True
+        return day_figure(result, period_id, start, end), "Day overview ready · reduced raw counts", True
+
+    @app.callback(Output("range-start", "value", allow_duplicate=True), Output("range-end", "value", allow_duplicate=True),
+                  Input("day-graph", "relayoutData"), State("day-graph", "figure"), State("period-select", "value"),
+                  State("range-start", "value"), State("range-end", "value"), prevent_initial_call=True)
+    def select_day_range(event, figure, period_id, current_start, current_end):
+        meta = (figure or {}).get("layout", {}).get("meta", {})
+        if not event or meta.get("period_id") != period_id:
+            return no_update, no_update
+        shape = event.get("shapes", [{}])[0] if event.get("shapes") else {}
+        left = event.get("shapes[0].x0", shape.get("x0", current_start))
+        right = event.get("shapes[0].x1", shape.get("x1", current_end))
+        if not any(key.startswith("shapes") for key in event):
+            return no_update, no_update
+        try:
+            start, end = _parse_time(str(left)), _parse_time(str(right))
+            start, end = max(start, _parse_time(meta["day_start"])), min(end, _parse_time(meta["day_end"]))
+            if start >= end:
+                return no_update, no_update
+            return start.isoformat(), end.isoformat()
+        except (ValueError, KeyError):
+            return no_update, no_update
+
+    app.clientside_callback(
+        """async function(start, end, figure, period) {
+            const skip = window.dash_clientside.no_update;
+            if (!start || !end || figure?.layout?.meta?.period_id !== period) return skip;
+            const graph = document.querySelector('#day-graph .js-plotly-plot');
+            if (!graph?.layout?.shapes?.length) return skip;
+            const parse = x => Date.parse(/[Zz]|[+-]\\d\\d:\\d\\d$/.test(x) ? x : x + 'Z');
+            const a = parse(start), b = parse(end), shape = graph.layout.shapes[0];
+            if (!Number.isFinite(a) || !Number.isFinite(b) || a >= b) return skip;
+            if (parse(shape.x0) === a && parse(shape.x1) === b) return skip;
+            await Plotly.relayout(graph, {'shapes[0].x0': start, 'shapes[0].x1': end});
+            return start + end;
+        }""", Output("day-sync", "data"), Input("range-start", "value"), Input("range-end", "value"),
+        State("day-graph", "figure"), State("period-select", "value"), prevent_initial_call=True)
 
     @app.callback(
         Output("upload-status", "children"),
@@ -440,9 +234,10 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         Output("period-select", "options"),
         Output("period-select", "value"),
         Input("refresh", "n_intervals"),
+        Input("upload-status", "children"),
         State("period-select", "value"),
     )
-    def refresh_periods(_: int, current: int | None):
+    def refresh_periods(_: int, upload_status, current: int | None):
         choices = archive.list_periods()
         options = [
             {"label": f"{item['label']}  [{', '.join(item['channels'])}]", "value": item["id"]}
@@ -475,7 +270,7 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
             selected,
             (
                 f"Available channels: {', '.join(channels)}. Raw amplitudes are uncorrected counts. "
-                "Choose a time range, then click Load waveform."
+                "Choose a time range, then click Load detail."
             ),
             start.isoformat(),
             default_end.isoformat(),
@@ -512,6 +307,22 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         else:
             detector = "stalta"
         return channel_options, trigger_channel, detector_options, detector
+
+    app.clientside_callback(
+        """function(period, channels) {
+            const disabled = !period || !channels || !channels.length;
+            return [!period, disabled, disabled];
+        }""", Output("load-day", "disabled"), Output("load-overview", "disabled"), Output("search-button", "disabled"),
+        Input("period-select", "value"), Input("channel-select", "value"))
+
+    app.clientside_callback(
+        """function(figure, period, channels) {
+            const meta = figure?.layout?.meta;
+            const stale = figure?.data?.length && (!meta || meta.period_id !== period ||
+                JSON.stringify(meta.channels) !== JSON.stringify([...(channels || [])].sort()));
+            return stale ? {display: 'none'} : {};
+        }""", Output("overview-loading", "style"), Input("overview-graph", "figure"),
+        Input("period-select", "value"), Input("channel-select", "value"))
 
     app.clientside_callback(
         ClientsideFunction(namespace="shakepi", function_name="viewButtonsDisabled"),
@@ -567,25 +378,33 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         Output("overview-graph", "figure"),
         Output("overview-status", "children"),
         Input("load-overview", "n_clicks"),
-        State("period-select", "value"),
+        Input("candidate-select", "value"),
+        Input("detail-left", "value"),
+        Input("detail-right", "value"),
+        Input("period-select", "value"),
         State("channel-select", "value"),
         State("range-start", "value"),
         State("range-end", "value"),
         State("preprocess-options", "value"),
         State("bandpass-low", "value"),
         State("bandpass-high", "value"),
+        State("show-spectrogram", "value"),
         prevent_initial_call=True,
         running=[
             (
                 Output("overview-range-controls", "className"),
-                "range-grid controls-disabled",
-                "range-grid",
+                "workbench-toolbar controls-disabled",
+                "workbench-toolbar",
             ),
             (Output("overview-region", "aria-busy"), "true", "false"),
+            (Output("candidate-list-region", "className"), "controls-disabled", ""),
         ],
     )
     def render_overview(
         _load_clicks: int | None,
+        candidate_id: int | None,
+        left: float | None,
+        right: float | None,
         period_id: int | None,
         channels: list[str] | None,
         start_value: str | None,
@@ -593,7 +412,12 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         options: list[str] | None,
         low: float | None,
         high: float | None,
+        spectrogram: list[str] | None,
     ):
+        if ctx.triggered_id == "period-select":
+            return waveform_spectrogram_figure(Stream()), "Choose an interval, then Load detail."
+        if ctx.triggered_id != "load-overview" and not candidate_id:
+            return no_update, no_update
         if not period_id or not channels or not start_value or not end_value:
             return (
                 waveform_spectrogram_figure(Stream(), title="Select a station period"),
@@ -601,11 +425,25 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
             )
         try:
             start, end = _parse_time(start_value), _parse_time(end_value)
+            if len(channels) > 4:
+                raise ValueError("Select at most four channels for detail")
             recipe = _recipe_from_controls("fill" in (options or []), "denoise" in (options or []), low, high)
+            candidate = None
+            if ctx.triggered_id != "load-overview":
+                from .models import DetectionCandidate
+                with sessions() as session:
+                    candidate = session.get(DetectionCandidate, candidate_id)
+                    if candidate is None or candidate.run.period_id != period_id:
+                        return no_update, no_update
+                    start = candidate.timestamp.replace(tzinfo=UTC) - timedelta(seconds=30 if left is None else left)
+                    end = (candidate.end_time or candidate.timestamp).replace(tzinfo=UTC) + timedelta(seconds=90 if right is None else right)
+                    recipe = PreprocessingRecipe.model_validate_json(candidate.run.recipe.canonical_json) if candidate.run.recipe else PreprocessingRecipe()
             stream = analysis.prepared_stream(period_id, channels, (start, end), recipe)
             point_count = sum(len(trace.data) for trace in stream)
             plotted_channels = ", ".join(trace.id for trace in stream) or "none"
-            figure = waveform_spectrogram_figure(stream, (start, end))
+            figure = waveform_spectrogram_figure(stream, show_spectrogram="show" in (spectrogram or []))
+            if candidate is not None:
+                figure.add_shape(type="line", x0=candidate.timestamp, x1=candidate.timestamp, y0=0, y1=1, xref="x", yref="paper", line={"color": "#fbbf24"})
             if stream:
                 figure.update_xaxes(range=[start.isoformat(), end.isoformat()], autorange=False)
                 figure.update_layout(meta={
@@ -616,7 +454,7 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
             return (
                 figure,
                 (
-                    f"Plotted {point_count:,} samples from {plotted_channels} "
+                    f"Plotted {point_count:,} samples {'around candidate ' + str(candidate_id) if candidate is not None else ''} from {plotted_channels} "
                     f"between {start.isoformat()} and {end.isoformat()}."
                 ),
             )
@@ -730,6 +568,8 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         try:
             if not period_id or not channels:
                 raise ValueError("Choose a station period and channel selection")
+            if _parse_time(start_value) >= _parse_time(end_value):
+                raise ValueError("Search start must precede search end")
             recipe = _recipe_from_controls("fill" in (options or []), "denoise" in (options or []), low, high)
             parameters = (
                 StaLtaParameters(sta_seconds=sta, lta_seconds=lta, trigger_on=trigger_on, trigger_off=trigger_off)
@@ -819,74 +659,19 @@ def create_application(settings: Settings | None = None) -> tuple[FastAPI, Dash]
         valid = {option["value"] for option in options}
         if current in valid:
             return options, no_update
-        return options, options[0]["value"] if options else None
+        return options, None
 
-    @app.callback(
-        Output("detail-graph", "figure"),
-        Output("detail-status", "children"),
-        Input("candidate-select", "value"),
-        Input("detail-left", "value"),
-        Input("detail-right", "value"),
-        State("channel-select", "value"),
-        running=[
-            (Output("detail-controls", "disabled"), True, False),
-            (
-                Output("candidate-list-region", "className"),
-                "controls-disabled",
-                "",
-            ),
-            (Output("detail-region", "aria-busy"), "true", "false"),
-        ],
-    )
-    def render_detail(candidate_id: int | None, left: float | None, right: float | None, channels: list[str] | None):
-        if not candidate_id or not channels:
-            return (
-                waveform_spectrogram_figure(Stream(), title="Select a detected candidate"),
-                "Select a detected candidate to inspect its waveform.",
-            )
-        try:
-            with sessions() as session:
-                from .models import DetectionCandidate
-
-                candidate = session.get(DetectionCandidate, candidate_id)
-                if candidate is None:
-                    return (
-                        waveform_spectrogram_figure(Stream(), title="Candidate no longer exists"),
-                        "Candidate no longer exists.",
-                    )
-                run = candidate.run
-                start = candidate.timestamp - timedelta(seconds=left or 30)
-                end = (candidate.end_time or candidate.timestamp) + timedelta(seconds=right or 90)
-                recipe = (
-                    PreprocessingRecipe.model_validate_json(run.recipe.canonical_json)
-                    if run.recipe
-                    else PreprocessingRecipe()
-                )
-                stream = analysis.prepared_stream(run.period_id, channels, (start, end), recipe)
-                point_count = sum(len(trace.data) for trace in stream)
-                figure = waveform_spectrogram_figure(
-                    stream,
-                    (candidate.timestamp, candidate.end_time or candidate.timestamp),
-                    "Candidate detail",
-                )
-                if candidate.phase:
-                    figure.add_vline(
-                        x=candidate.timestamp,
-                        line_color="#fbbf24",
-                        annotation_text=f"{candidate.phase} pick",
-                    )
-                return (
-                    figure,
-                    (
-                        f"Plotted {point_count:,} samples around candidate {candidate_id} "
-                        f"between {start.isoformat()} and {end.isoformat()}."
-                    ),
-                )
-        except Exception as error:
-            return (
-                waveform_spectrogram_figure(Stream(), title=f"Unable to render candidate: {error}"),
-                f"Unable to render candidate: {error}",
-            )
+    @app.callback(Output("review-controls", "disabled"), Output("review-target", "children"),
+                  Output("assessment-verdict", "value"), Output("assessment-notes", "value"),
+                  Input("candidate-select", "value"), Input("period-select", "value"))
+    def select_review(candidate_id, period_id):
+        from .models import DetectionCandidate
+        with sessions() as session:
+            candidate = session.get(DetectionCandidate, candidate_id) if candidate_id else None
+            if candidate is None or candidate.run.period_id != period_id:
+                return True, "Select a detected candidate.", "unreviewed", ""
+            review = candidate.assessment
+            return False, f"Candidate {candidate.id} · {candidate.timestamp:%H:%M:%S} UTC", review.verdict if review else "unreviewed", review.notes if review else ""
 
     @app.callback(
         Output("assessment-status", "children"),

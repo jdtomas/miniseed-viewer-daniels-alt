@@ -53,7 +53,7 @@ def live_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
         host="127.0.0.1",
         port=port,
         log_level="warning",
-        lifespan="off",
+        lifespan="on",
     )
     uvicorn_server = uvicorn.Server(config)
     thread = threading.Thread(target=uvicorn_server.run, daemon=True)
@@ -119,6 +119,7 @@ def test_four_channel_fractional_time_load_and_reset(live_app: str) -> None:
         page.locator("#period-select").click()
         page.get_by_text("AM.RF4E8.00", exact=False).first.click()
         page.wait_for_function("() => document.querySelector('#range-end').value.includes('00:05')")
+        page.locator("#show-spectrogram input").check()
         page.locator("#load-overview").click()
         page.wait_for_function("""() => document.querySelectorAll(
             '#overview-graph .scatterlayer .js-line').length === 4""")
@@ -139,90 +140,66 @@ def test_four_channel_fractional_time_load_and_reset(live_app: str) -> None:
 
 
 def test_uploaded_waveform_renders_points_and_survives_refresh(
-    live_app: str,
-    tmp_path: Path,
+    live_app: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "AM.RF4E8.00.EHZ.D.2026.033"
-    samples = np.round(np.random.default_rng(42).normal(0, 8, 6_000)).astype(np.int32)
-    samples[4_000:4_150] += 1_000
-    write_mseed(source, data=samples)
+    from shakepi.waveforms import WaveformSource
+    calls = []
+    original = WaveformSource.read
 
+    def track(self, *args, **kwargs):
+        calls.append(args)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(WaveformSource, "read", track)
+    source = tmp_path / "AM.RF4E8.00.EHZ.D.2026.033"
+    samples = np.round(np.random.default_rng(42).normal(0, 8, 6000)).astype(np.int32)
+    samples[4000:4150] += 1000
+    write_mseed(source, data=samples)
     manager, browser = _launch_chromium()
+    errors = []
     try:
         page = browser.new_page()
-        page.goto(live_app, wait_until="domcontentloaded")
-        page.get_by_role("heading", name="ShakePi MiniSEED Viewer").wait_for(timeout=10_000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(live_app)
+        page.get_by_text("No station period selected.", exact=True).wait_for()
+        assert not calls
         page.set_input_files("input[type=file]", source)
-        page.locator("#upload-loading .activity-status--busy").wait_for(
-            state="visible",
-            timeout=5_000,
-        )
-        assert page.locator("input[type=file]").is_disabled()
-        page.get_by_text(
-            "MiniSEED file stored in the immutable SDS archive."
-        ).wait_for(timeout=10_000)
+        page.get_by_text("MiniSEED file stored in the immutable SDS archive.", exact=False).wait_for()
+        assert not calls
         page.locator("#period-select").click()
         page.get_by_text("AM.RF4E8.00", exact=False).first.click()
-        page.get_by_role("button", name="Load waveform", exact=True).click()
-        page.locator("#overview-loading .graph-skeleton").wait_for(
-            state="visible",
-            timeout=10_000,
-        )
-        page.get_by_text("Plotted 6,000 samples").wait_for(timeout=10_000)
-        page.locator("#overview-loading .graph-skeleton").wait_for(state="hidden")
-        page.wait_for_function(
-            """
-            () => {
-              const graph = document.querySelector("#overview-graph .js-plotly-plot");
-              const trace = graph?._fullData?.find((item) => item.type === "scatter");
-              return Boolean(trace && trace.x?.length > 0 && trace.y?.length > 0);
-            }
-            """
-        )
-
-        point_count = page.evaluate(
-            """
-            () => {
-              const graph = document.querySelector("#overview-graph .js-plotly-plot");
-              const trace = graph._fullData.find((item) => item.type === "scatter");
-              return {x: trace.x.length, y: trace.y.length, title: document.title};
-            }
-            """
-        )
-        assert point_count["x"] == point_count["y"] > 0
-        assert point_count["title"] == "ShakePi MiniSEED Viewer"
-
-        page.get_by_role("button", name="Search", exact=True).click()
-        page.locator("#search-status .activity-status--busy").wait_for(
-            state="visible",
-            timeout=10_000,
-        )
-        assert page.get_by_role("button", name="Search", exact=True).is_disabled()
-        page.locator("#search-status .activity-status--success").wait_for(
-            state="visible",
-            timeout=15_000,
-        )
-        page.locator("#candidate-select input").first.wait_for(timeout=10_000)
-        page.locator("#detail-loading .graph-skeleton").wait_for(
-            state="visible",
-            timeout=10_000,
-        )
-        page.get_by_text("around candidate").wait_for(timeout=10_000)
-        page.locator("#detail-loading .graph-skeleton").wait_for(state="hidden")
-        page.wait_for_function(
-            """
-            () => {
-              const graph = document.querySelector("#detail-graph .js-plotly-plot");
-              const trace = graph?._fullData?.find((item) => item.type === "scatter");
-              return Boolean(trace && trace.x?.length > 0 && trace.y?.length > 0);
-            }
-            """
-        )
-
-        page.reload(wait_until="domcontentloaded")
-        page.get_by_text("No station period selected.", exact=True).wait_for(timeout=10_000)
-        page.wait_for_function("() => document.title === 'ShakePi MiniSEED Viewer'")
-        assert page.title() == "ShakePi MiniSEED Viewer"
+        page.wait_for_function("() => !!document.querySelector('#range-end').value")
+        assert not calls
+        page.locator("#load-day").click()
+        page.get_by_text("Day overview ready", exact=False).wait_for(timeout=20000)
+        assert not calls
+        page.evaluate("""async () => {
+            await Plotly.relayout(document.querySelector('#day-graph .js-plotly-plot'),
+              {'shapes[0].x0': '2026-02-02 00:00:05', 'shapes[0].x1': '2026-02-02 00:00:55'});
+        }""")
+        page.wait_for_function("() => document.querySelector('#range-start').value.includes('00:00:05')")
+        assert not calls
+        page.locator("#load-overview").click()
+        page.wait_for_function("() => !!document.querySelector('#overview-graph .scatterlayer .js-line')")
+        assert len(calls) == 1
+        page.locator("#search-button").click()
+        page.locator("#search-status .activity-status--success").wait_for(timeout=30000)
+        page.locator("#candidate-select input").first.wait_for(timeout=20000)
+        assert page.locator("#save-assessment").is_disabled()
+        assert len(calls) == 1
+        page.locator("#candidate-select input").first.check()
+        page.get_by_text("around candidate", exact=False).wait_for()
+        assert page.locator("#save-assessment").is_enabled()
+        page.locator("#assessment-verdict").click()
+        page.get_by_text("Noise", exact=True).click()
+        page.locator("#assessment-notes").fill("Browser regression review")
+        page.locator("#save-assessment").click()
+        page.get_by_text("Assessment saved.", exact=True).wait_for()
+        reads_before_reload = len(calls)
+        page.reload()
+        page.get_by_text("No station period selected.", exact=True).wait_for()
+        assert len(calls) == reads_before_reload
+        assert not errors, errors
     finally:
         browser.close()
         manager.__exit__(None, None, None)

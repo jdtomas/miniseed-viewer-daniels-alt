@@ -93,7 +93,6 @@ def test_layout_has_scoped_accessible_loading_feedback(tmp_path: Path) -> None:
     upload_loading = _component_with_id(app.layout, "upload-loading")
     overview_loading = _component_with_id(app.layout, "overview-loading")
     load_overview = _component_with_id(app.layout, "load-overview")
-    detail_loading = _component_with_id(app.layout, "detail-loading")
     preprocess_refresh = _component_with_id(app.layout, "preprocess-refresh")
     detector_refresh = _component_with_id(app.layout, "detector-refresh")
     preprocess_operation = _component_with_id(app.layout, "preprocess-operation")
@@ -102,13 +101,12 @@ def test_layout_has_scoped_accessible_loading_feedback(tmp_path: Path) -> None:
     assert upload_loading.target_components == {"upload-status": "children"}
     assert overview_loading.target_components == {"overview-graph": "figure"}
     assert load_overview is not None
-    assert overview_loading.custom_spinner.role == "status"
-    assert detail_loading.target_components == {"detail-graph": "figure"}
-    assert detail_loading.custom_spinner.role == "status"
+    assert _component_with_id(app.layout, "detail-graph") is None
+    assert _component_with_id(app.layout, "day-graph") is not None
     assert preprocess_refresh.disabled is True
     assert detector_refresh.disabled is True
-    assert preprocess_operation.storage_type == "session"
-    assert detector_operation.storage_type == "session"
+    assert getattr(preprocess_operation, "storage_type", "memory") == "memory"
+    assert getattr(detector_operation, "storage_type", "memory") == "memory"
 
 
 def test_dash_upload_ingests_sds_filename(app_context, tmp_path: Path) -> None:
@@ -223,7 +221,7 @@ def test_period_refresh_does_not_reemit_unchanged_selection(tmp_path: Path) -> N
                     {"id": "period-select", "property": "options"},
                     {"id": "period-select", "property": "value"},
                 ],
-                "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}],
+                "inputs": [{"id": "refresh", "property": "n_intervals", "value": 1}, {"id": "upload-status", "property": "children", "value": ""}],
                 "state": [{"id": "period-select", "property": "value", "value": period_id}],
                 "changedPropIds": ["refresh.n_intervals"],
             },
@@ -267,9 +265,12 @@ def test_overview_graph_dash_endpoint_contains_waveform_points(tmp_path: Path) -
             ],
             [
                 {"id": "load-overview", "property": "n_clicks", "value": 1},
+                {"id": "candidate-select", "property": "value", "value": None},
+                {"id": "detail-left", "property": "value", "value": 30},
+                {"id": "detail-right", "property": "value", "value": 90},
+                {"id": "period-select", "property": "value", "value": period_id},
             ],
             [
-                {"id": "period-select", "property": "value", "value": period_id},
                 {"id": "channel-select", "property": "value", "value": ["EHZ"]},
                 {"id": "range-start", "property": "value", "value": "2026-02-02T00:00:00+00:00"},
                 {
@@ -280,6 +281,7 @@ def test_overview_graph_dash_endpoint_contains_waveform_points(tmp_path: Path) -
                 {"id": "preprocess-options", "property": "value", "value": []},
                 {"id": "bandpass-low", "property": "value", "value": None},
                 {"id": "bandpass-high", "property": "value", "value": None},
+                {"id": "show-spectrogram", "property": "value", "value": []},
             ],
         )
 
